@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import React, { useState, FormEvent, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { LayoutDashboard, Settings, Users, BarChart3, Bell, Search, Calendar, Filter, UserPlus, Trash2, X, Plus, LogOut } from 'lucide-react';
+import { getDashboardData } from './data';
 import React, { useState, FormEvent, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutDashboard, Settings, Users, BarChart3, Bell, Search, Calendar, Filter, UserPlus, Trash2, X, Plus } from 'lucide-react';
@@ -14,57 +18,13 @@ import { UserTaskMixChart } from './components/UserTaskMixChart';
 import { AnalyticsView } from './components/AnalyticsView';
 import { TaskDetail } from './components/TaskDetail';
 import { SettingsModal } from './components/SettingsModal';
+import { AuthScreen } from './components/AuthScreen';
 import { format } from 'date-fns';
-import { TimeRange, Task } from './types';
-
-const INITIAL_TASKS: Task[] = [
-  { 
-    id: '1', 
-    title: 'Complete performance audit', 
-    description: 'Quarterly audit of team performance metrics and operational efficiency across all nodes.',
-    project: 'Internal Strategy',
-    deadline: '2026-06-01',
-    priority: 'Critical',
-    completed: false, 
-    owner: 'Uwana', 
-    createdAt: new Date().toISOString() 
-  },
-  { 
-    id: '2', 
-    title: 'Update infrastructure nodes', 
-    description: 'Patching and updating all AWS infrastructure nodes to the latest security baseline.',
-    project: 'Operations Scalability',
-    deadline: '2026-05-20',
-    priority: 'Operational',
-    completed: true, 
-    owner: 'Uwana', 
-    createdAt: new Date().toISOString() 
-  },
-  { 
-    id: '3', 
-    title: 'Operational review Q3', 
-    description: 'Review of Q3 operational goals and alignment with executive strategy.',
-    project: 'Strategic Planning',
-    deadline: '2026-08-15',
-    priority: 'Logistical',
-    completed: false, 
-    owner: 'Adaeze', 
-    createdAt: new Date().toISOString() 
-  },
-  { 
-    id: '4', 
-    title: 'Security patch rollout', 
-    description: 'Deployment of the critical security patch for the core API services.',
-    project: 'Security Baseline',
-    deadline: '2026-05-15',
-    priority: 'Critical',
-    completed: true, 
-    owner: 'Bright', 
-    createdAt: new Date().toISOString() 
-  },
-];
+import { TimeRange, Task, DashboardData } from './types';
+import { api } from './lib/api';
 
 export default function App() {
+  const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [timeRange, setTimeRange] = useState<TimeRange>('Month');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -75,11 +35,53 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [quarterlyGoal, setQuarterlyGoal] = useState(50);
   const [isEditingGoal, setIsEditingGoal] = useState(false);
-  const [teamMembers, setTeamMembers] = useState(['Uwana', 'Adaeze', 'Ikanke', 'Bright']);
+  const [teamMembers, setTeamMembers] = useState<string[]>([]);
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedKpiId, setSelectedKpiId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      setUser({ username: 'Operator' });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      fetchData();
+    }
+  }, [user]);
+
+  const fetchData = async () => {
+    try {
+      const [fetchedTasks, fetchedMembers, fetchedDashboard] = await Promise.all([
+        api.tasks.list(),
+        api.members.list(),
+        api.dashboard.get(),
+      ]);
+      setTasks(fetchedTasks);
+      setTeamMembers(fetchedMembers);
+      setDashboardData(fetchedDashboard);
+    } catch (error) {
+      console.error('Failed to fetch data', error);
+    }
+  };
+
+  const handleLogout = () => {
+    api.auth.logout();
+    setUser(null);
+    setTasks([]);
+    setTeamMembers([]);
+    setDashboardData(null);
+  };
+
+  const filteredTasks = useMemo(() => tasks.filter(task =>
   
   useEffect(() => {
     fetchTasks();
@@ -118,17 +120,64 @@ export default function App() {
     task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     task.project?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     task.owner.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), [tasks, searchQuery]);
 
   const tasksDone = tasks.filter(t => t.completed).length;
   const tasksActive = tasks.filter(t => !t.completed).length;
   const successRate = tasks.length > 0 ? (tasksDone / tasks.length) * 100 : 0;
-  const avgTasksDone = tasks.length > 0 ? (tasksDone / teamMembers.length).toFixed(1) : '0';
+  const avgTasksDone = tasks.length > 0 ? (tasksDone / (teamMembers.length || 1)).toFixed(1) : '0';
 
   const statusColor = tasksDone >= tasksActive ? 'text-emerald-400' : 'text-rose-400';
   const statusBg = tasksDone >= tasksActive ? 'bg-emerald-500/10' : 'bg-rose-500/10';
   const statusBorder = tasksDone >= tasksActive ? 'border-emerald-500/20' : 'border-rose-500/20';
 
+  const finalDashboardData = useMemo(() => {
+    const currentDashboardData = dashboardData || getDashboardData(timeRange);
+    return {
+      ...currentDashboardData,
+      kpis: currentDashboardData.kpis.map(kpi => {
+        const ownerTasks = tasks.filter(t => t.owner === kpi.owner);
+        if (kpi.type === 'performance') {
+          const completedCount = ownerTasks.filter(t => t.completed).length;
+          return { ...kpi, value: completedCount + (kpi.previousValue || 0) };
+        }
+        if (kpi.type === 'workload') {
+          const activeCount = ownerTasks.filter(t => !t.completed).length;
+          return { ...kpi, value: activeCount };
+        }
+        return kpi;
+      }).filter(kpi =>
+        kpi.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        kpi.owner?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    };
+  }, [dashboardData, tasks, searchQuery, timeRange]);
+
+  useEffect(() => {
+    if (finalDashboardData.kpis.length > 0 && !selectedKpiId) {
+      setSelectedKpiId(finalDashboardData.kpis[0].id);
+    }
+  }, [finalDashboardData.kpis, selectedKpiId]);
+
+  const selectedKpi = finalDashboardData.kpis.find(k => k.id === selectedKpiId) || finalDashboardData.kpis[0];
+  const selectedTask = tasks.find(t => t.id === selectedTaskId);
+
+  const handleAddTask = async (owner: string, details: Partial<Task>) => {
+    try {
+      const newTaskData = {
+        title: details.title || 'Untitled Objective',
+        description: details.description || 'New operational objective initiated.',
+        project: details.project || 'Ad-hoc Task',
+        deadline: details.deadline || format(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
+        duration: details.duration || '',
+        completed: false,
+        owner,
+        createdAt: new Date().toISOString(),
+      };
+      const createdTask = await api.tasks.create(newTaskData);
+      setTasks(prev => [createdTask, ...prev]);
+    } catch (error) {
+      console.error('Failed to add task', error);
   // Dynamically update KPIs based on current task state
   const processedDashboardData = dashboardData ? {
     ...dashboardData,
@@ -181,6 +230,11 @@ export default function App() {
   const handleToggleTask = async (id: string) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
+    try {
+      const updatedTask = await api.tasks.update(id, { completed: !task.completed });
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: updatedTask.completed } : t));
+    } catch (error) {
+      console.error('Failed to toggle task', error);
 
     try {
       const res = await fetch(`/api/tasks/${id}`, {
@@ -197,6 +251,10 @@ export default function App() {
 
   const handleDeleteTask = async (id: string) => {
     try {
+      await api.tasks.delete(id);
+      setTasks(prev => prev.filter(t => t.id !== id));
+    } catch (error) {
+      console.error('Failed to delete task', error);
       await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
       setTasks(prev => prev.filter(t => t.id !== id));
     } catch (err) {
@@ -206,6 +264,10 @@ export default function App() {
 
   const handleUpdateTask = async (id: string, updates: Partial<Task>) => {
     try {
+      const updatedTask = await api.tasks.update(id, updates);
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updatedTask } : t));
+    } catch (error) {
+      console.error('Failed to update task', error);
       const res = await fetch(`/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -218,19 +280,37 @@ export default function App() {
     }
   };
 
-  const handleAddMember = (e: React.FormEvent) => {
+  const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newMemberName.trim() && !teamMembers.includes(newMemberName.trim())) {
-      setTeamMembers(prev => [...prev, newMemberName.trim()]);
-      setNewMemberName('');
-      setIsAddingMember(false);
+      try {
+        await api.members.add(newMemberName.trim());
+        setTeamMembers(prev => [...prev, newMemberName.trim()]);
+        setNewMemberName('');
+        setIsAddingMember(false);
+      } catch (error) {
+        console.error('Failed to add member', error);
+      }
     }
   };
 
-  const handleRemoveMember = (name: string) => {
-    setTeamMembers(prev => prev.filter(m => m !== name));
+  const handleRemoveMember = async (name: string) => {
+    try {
+      await api.members.remove(name);
+      setTeamMembers(prev => prev.filter(m => m !== name));
+    } catch (error) {
+      console.error('Failed to remove member', error);
+    }
   };
 
+  if (loading) {
+    return <div className="min-h-screen bg-[#020617] flex items-center justify-center">
+      <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+    </div>;
+  }
+
+  if (!user) {
+    return <AuthScreen onLogin={setUser} />;
   if (error) {
     return (
       <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white font-mono p-4 text-center">
@@ -346,10 +426,20 @@ export default function App() {
             <span className="hidden lg:block text-sm font-semibold">Settings</span>
           </button>
           
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center lg:justify-start gap-3 p-3 text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+          >
+            <LogOut size={18} />
+            <span className="hidden lg:block text-sm font-semibold">Logout</span>
+          </button>
+
           <div className="p-4 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-color)] flex items-center gap-3">
-             <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 shrink-0" />
+             <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 shrink-0 flex items-center justify-center text-[10px] font-bold text-indigo-400">
+               {user.username[0].toUpperCase()}
+             </div>
              <div className="hidden lg:block overflow-hidden">
-                <p className="text-xs font-bold truncate text-[var(--text-primary)]">M. Chen</p>
+                <p className="text-xs font-bold truncate text-[var(--text-primary)]">{user.username}</p>
                 <p className="text-[10px] text-[var(--text-secondary)] uppercase">Admin</p>
              </div>
           </div>
@@ -505,6 +595,7 @@ export default function App() {
               {/* Team Member Sections */}
               <section className="space-y-12">
                 {teamMembers.map((owner) => {
+                  const ownerKpis = finalDashboardData.kpis.filter(k => k.owner === owner);
                   const ownerKpis = processedDashboardData.kpis.filter((k: any) => k.owner === owner);
                   const hasTasks = filteredTasks.some(t => t.owner === owner);
                   
@@ -561,6 +652,8 @@ export default function App() {
                         ))}
                         <UserTaskMixChart 
                           owner={owner}
+                          activeCount={tasks.filter(t => t.owner === owner && !t.completed).length + (finalDashboardData.kpis.find(k => k.owner === owner && k.type === 'workload')?.value || 0)}
+                          completedCount={tasks.filter(t => t.owner === owner && t.completed).length + (finalDashboardData.kpis.find(k => k.owner === owner && k.type === 'performance')?.previousValue || 0)}
                           activeCount={tasks.filter(t => t.owner === owner && !t.completed).length + (processedDashboardData.kpis.find((k: any) => k.owner === owner && k.type === 'workload')?.value || 0)}
                           completedCount={tasks.filter(t => t.owner === owner && t.completed).length + (processedDashboardData.kpis.find((k: any) => k.owner === owner && k.type === 'performance')?.previousValue || 0)}
                         />
@@ -572,9 +665,13 @@ export default function App() {
 
               {/* Detailed Analysis Section */}
               <div className="pt-8 border-t border-slate-800">
-                <h2 className="text-lg md:text-xl font-bold text-white mb-6 tracking-tight">Focus Analysis: <span className="text-indigo-400">{selectedKpi.name}</span></h2>
+                <h2 className="text-lg md:text-xl font-bold text-white mb-6 tracking-tight">Focus Analysis: <span className="text-indigo-400">{selectedKpi?.name}</span></h2>
                 <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
                   <div className="md:col-span-1 lg:col-span-2">
+                    <TrendsChart data={finalDashboardData.trends} title={`${selectedKpi?.name.toUpperCase()} VARIANCE`} />
+                  </div>
+                  <div className="md:col-span-1 lg:col-span-1">
+                    <AIInsights data={finalDashboardData} />
                     <TrendsChart data={processedDashboardData.trends} title={`${selectedKpi.name.toUpperCase()} VARIANCE`} />
                   </div>
                   <div className="md:col-span-1 lg:col-span-1">
@@ -586,6 +683,7 @@ export default function App() {
           )}
 
           {activeTab === 'analytics' && (
+            <AnalyticsView data={finalDashboardData} tasks={tasks} />
             <AnalyticsView data={processedDashboardData} tasks={tasks} />
           )}
 
