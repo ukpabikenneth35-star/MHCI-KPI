@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { GoogleGenAI } from "@google/genai";
 import { Sparkles, Loader2, RefreshCw } from 'lucide-react';
 import { DashboardData } from '../types';
 import { motion } from 'motion/react';
@@ -15,26 +14,21 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ data }) => {
   const generateInsight = async () => {
     setLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `
-        You are a project management strategist. Analyze the following team task KPI data and provide 3 concise, actionable insights for the team (Uwana, Adaeze, Ikanke, Bright).
-        
-        KPI Data:
-        ${data.kpis.map(k => `- ${k.owner} (${k.name}): ${k.value}${k.unit} (${k.trend} ${k.change}% trend)`).join('\n')}
-        
-        Focus on task completion rates, workload balance, and individual performance trends. 
-        Format your response as a bulleted list of 3 brief, high-impact tactical points.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+      const res = await fetch('/api/ai/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data }),
       });
+      const result = await res.json();
 
-      setInsight(response.text || "Unable to generate insights at this time.");
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      setInsight(result.insight || "Unable to generate insights at this time.");
     } catch (error) {
       console.error("AI Insight Error:", error);
-      setInsight("Error generating insights. Please check your API key if it's the first time you run the app.");
+      setInsight("Error generating insights. Please try again later.");
     } finally {
       setLoading(false);
     }
