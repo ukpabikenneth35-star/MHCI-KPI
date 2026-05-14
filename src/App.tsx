@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, FormEvent } from 'react';
+import React, { useState, FormEvent, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutDashboard, Settings, Users, BarChart3, Bell, Search, Calendar, Filter, UserPlus, Trash2, X, Plus } from 'lucide-react';
-import { getDashboardData } from './data';
 import { KPICard } from './components/KPICard';
 import { TrendsChart } from './components/TrendsChart';
 import { AIInsights } from './components/AIInsights';
@@ -68,7 +67,9 @@ const INITIAL_TASKS: Task[] = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [timeRange, setTimeRange] = useState<TimeRange>('Month');
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [dashboardData, setDashboardData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
   const [activeOwnerTasks, setActiveOwnerTasks] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -80,8 +81,38 @@ export default function App() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
-  const rawDashboardData = getDashboardData(timeRange);
-  
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [timeRange]);
+
+  const fetchTasks = async () => {
+    try {
+      const res = await fetch('/api/tasks');
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+      setTasks(data);
+    } catch (err) {
+      console.error('Error fetching tasks:', err);
+      setError('Failed to connect to the task server.');
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    try {
+      const res = await fetch(`/api/dashboard?range=${timeRange}`);
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+      setDashboardData(data);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setError('Failed to connect to the analytics server.');
+    }
+  };
+
   // Filter search results
   const filteredTasks = tasks.filter(task => 
     task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -99,9 +130,9 @@ export default function App() {
   const statusBorder = tasksDone >= tasksActive ? 'border-emerald-500/20' : 'border-rose-500/20';
 
   // Dynamically update KPIs based on current task state
-  const dashboardData = {
-    ...rawDashboardData,
-    kpis: rawDashboardData.kpis.map(kpi => {
+  const processedDashboardData = dashboardData ? {
+    ...dashboardData,
+    kpis: dashboardData.kpis.map((kpi: any) => {
       const ownerTasks = tasks.filter(t => t.owner === kpi.owner);
       if (kpi.type === 'performance') {
         const completedCount = ownerTasks.filter(t => t.completed).length;
@@ -112,20 +143,19 @@ export default function App() {
         return { ...kpi, value: activeCount };
       }
       return kpi;
-    }).filter(kpi => 
+    }).filter((kpi: any) =>
       kpi.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       kpi.owner?.toLowerCase().includes(searchQuery.toLowerCase())
     )
-  };
+  } : null;
 
-  const [selectedKpiId, setSelectedKpiId] = useState(dashboardData.kpis[0].id);
+  const [selectedKpiId, setSelectedKpiId] = useState<string | null>(null);
 
-  const selectedKpi = dashboardData.kpis.find(k => k.id === selectedKpiId) || dashboardData.kpis[0];
+  const selectedKpi = processedDashboardData?.kpis.find((k: any) => k.id === (selectedKpiId || processedDashboardData.kpis[0].id)) || processedDashboardData?.kpis[0];
   const selectedTask = tasks.find(t => t.id === selectedTaskId);
 
-  const handleAddTask = (owner: string, details: Partial<Task>) => {
-    const newTask: Task = {
-      id: Math.random().toString(36).substr(2, 9),
+  const handleAddTask = async (owner: string, details: Partial<Task>) => {
+    const newTask = {
       title: details.title || 'Untitled Objective',
       description: details.description || 'New operational objective initiated.',
       project: details.project || 'Ad-hoc Task',
@@ -133,21 +163,59 @@ export default function App() {
       duration: details.duration || '',
       completed: false,
       owner,
-      createdAt: new Date().toISOString(),
     };
-    setTasks(prev => [newTask, ...prev]);
+
+    try {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newTask),
+      });
+      const data = await res.json();
+      setTasks(prev => [data, ...prev]);
+    } catch (err) {
+      console.error('Error adding task:', err);
+    }
   };
 
-  const handleToggleTask = (id: string) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+  const handleToggleTask = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !task.completed }),
+      });
+      const data = await res.json();
+      setTasks(prev => prev.map(t => t.id === id ? data : t));
+    } catch (err) {
+      console.error('Error toggling task:', err);
+    }
   };
 
-  const handleDeleteTask = (id: string) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
+  const handleDeleteTask = async (id: string) => {
+    try {
+      await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      setTasks(prev => prev.filter(t => t.id !== id));
+    } catch (err) {
+      console.error('Error deleting task:', err);
+    }
   };
 
-  const handleUpdateTask = (id: string, updates: Partial<Task>) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  const handleUpdateTask = async (id: string, updates: Partial<Task>) => {
+    try {
+      const res = await fetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      setTasks(prev => prev.map(t => t.id === id ? data : t));
+    } catch (err) {
+      console.error('Error updating task:', err);
+    }
   };
 
   const handleAddMember = (e: React.FormEvent) => {
@@ -162,6 +230,37 @@ export default function App() {
   const handleRemoveMember = (name: string) => {
     setTeamMembers(prev => prev.filter(m => m !== name));
   };
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white font-mono p-4 text-center">
+        <div className="w-16 h-16 bg-rose-500/20 rounded-2xl flex items-center justify-center text-rose-500 mb-6 border border-rose-500/30">
+           <Trash2 size={32} />
+        </div>
+        <h2 className="text-xl font-bold mb-2">SYSTEM_CONNECTION_FAILURE</h2>
+        <p className="text-slate-500 text-sm max-w-xs">{error}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-8 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold transition-all"
+        >
+          RETRY_CONNECTION
+        </button>
+      </div>
+    );
+  }
+
+  if (!processedDashboardData) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white font-mono">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse [animation-delay:0.2s]" />
+          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse [animation-delay:0.4s]" />
+        </div>
+        <div className="text-[10px] tracking-[0.2em] text-indigo-400">INITIALIZING_CORE_RESOURCES</div>
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen ${theme} bg-[var(--bg-main)] flex text-[var(--text-primary)] font-sans selection:bg-indigo-500/30 transition-colors duration-300`}>
@@ -406,7 +505,7 @@ export default function App() {
               {/* Team Member Sections */}
               <section className="space-y-12">
                 {teamMembers.map((owner) => {
-                  const ownerKpis = dashboardData.kpis.filter(k => k.owner === owner);
+                  const ownerKpis = processedDashboardData.kpis.filter((k: any) => k.owner === owner);
                   const hasTasks = filteredTasks.some(t => t.owner === owner);
                   
                   if (ownerKpis.length === 0 && !hasTasks && !owner.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -447,7 +546,7 @@ export default function App() {
                         <div className="h-[1px] flex-1 bg-slate-800/50" />
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                        {ownerKpis.map((kpi) => (
+                        {ownerKpis.map((kpi: any) => (
                           <KPICard 
                             key={kpi.id} 
                             kpi={kpi} 
@@ -462,8 +561,8 @@ export default function App() {
                         ))}
                         <UserTaskMixChart 
                           owner={owner}
-                          activeCount={tasks.filter(t => t.owner === owner && !t.completed).length + (dashboardData.kpis.find(k => k.owner === owner && k.type === 'workload')?.value || 0)}
-                          completedCount={tasks.filter(t => t.owner === owner && t.completed).length + (dashboardData.kpis.find(k => k.owner === owner && k.type === 'performance')?.previousValue || 0)}
+                          activeCount={tasks.filter(t => t.owner === owner && !t.completed).length + (processedDashboardData.kpis.find((k: any) => k.owner === owner && k.type === 'workload')?.value || 0)}
+                          completedCount={tasks.filter(t => t.owner === owner && t.completed).length + (processedDashboardData.kpis.find((k: any) => k.owner === owner && k.type === 'performance')?.previousValue || 0)}
                         />
                       </div>
                     </div>
@@ -476,10 +575,10 @@ export default function App() {
                 <h2 className="text-lg md:text-xl font-bold text-white mb-6 tracking-tight">Focus Analysis: <span className="text-indigo-400">{selectedKpi.name}</span></h2>
                 <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
                   <div className="md:col-span-1 lg:col-span-2">
-                    <TrendsChart data={dashboardData.trends} title={`${selectedKpi.name.toUpperCase()} VARIANCE`} />
+                    <TrendsChart data={processedDashboardData.trends} title={`${selectedKpi.name.toUpperCase()} VARIANCE`} />
                   </div>
                   <div className="md:col-span-1 lg:col-span-1">
-                    <AIInsights data={dashboardData} />
+                    <AIInsights data={processedDashboardData} />
                   </div>
                 </section>
               </div>
@@ -487,7 +586,7 @@ export default function App() {
           )}
 
           {activeTab === 'analytics' && (
-            <AnalyticsView data={dashboardData} tasks={tasks} />
+            <AnalyticsView data={processedDashboardData} tasks={tasks} />
           )}
 
           {activeTab === 'customers' && (
