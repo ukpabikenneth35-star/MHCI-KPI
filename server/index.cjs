@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 const db = require('./database.cjs');
 
 const app = express();
@@ -11,6 +12,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_not_for_production';
 
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, '../dist')));
 
 // Auth Routes
 app.post('/api/auth/register', async (req, res) => {
@@ -197,6 +201,12 @@ app.get('/api/dashboard', authenticateToken, (req, res) => {
     kpis,
     trends
   });
+});
+
+// The "catchall" handler: for any request that doesn't
+// match one above, send back React's index.html file.
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 app.listen(PORT, () => {
